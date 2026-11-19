@@ -119,7 +119,11 @@ function join(){
  document.getElementById('setup').style.display='none';
  socket.emit('join',{name:name,avatar:myAvatar,pic:myPic,room:currentRoom});
 }
-if(name){setTimeout(()=>socket.emit('join',{name:name,avatar:myAvatar,pic:myPic,room:currentRoom}),300)}
+socket.on('connect', ()=>{
+  if(name){
+    socket.emit('join',{name:name,avatar:myAvatar,pic:myPic,room:currentRoom});
+  }
+});
 
 function send(){
  let input=document.getElementById('m');
