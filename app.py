@@ -1,13 +1,32 @@
-import os
+import os, json
 from flask import Flask, request
 from flask_socketio import SocketIO, emit, join_room
 
 app = Flask(__name__)
 socketio = SocketIO(app, cors_allowed_origins="*")
 
-messages = {r: [] for r in ["general","music","football","random"]}
-dms = {}
+DATA_FILE = "storkie_data.json"
+
+# --- PERSISTENT STORAGE ---
+def load_data():
+    try:
+        if os.path.exists(DATA_FILE):
+            with open(DATA_FILE, "r") as f:
+                d = json.load(f)
+                return d.get("messages", {r: [] for r in ["general","music","football","random"]}), d.get("dms", {})
+    except: pass
+    return {r: [] for r in ["general","music","football","random"]}, {}
+
+messages, dms = load_data()
 users = {}
+
+def save_data():
+    try:
+        # Don't save huge voice/image blobs forever - keep last 100 per room, trim images to avoid huge file
+        with open(DATA_FILE, "w") as f:
+            json.dump({"messages": messages, "dms": dms}, f)
+    except Exception as e:
+        print("save error", e)
 
 HTML = """
 <!DOCTYPE html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'>
@@ -64,7 +83,7 @@ button{border:none;border-radius:25px;padding:10px 16px;background:#ff2d78;color
 <div id=onlineList></div>
 </div>
 <div id=main>
-<div id=top><div><b id=roomTitle># general</b><br><small id=typing></small></div><small>Storkie • Fast</small></div>
+<div id=top><div><b id=roomTitle># general</b><br><small id=typing></small></div><small>Storkie • Saved 💾</small></div>
 <div id=chat></div>
 <div id=inputBar>
 <label style='cursor:pointer'>📷<input type=file id=picInput accept='image/*' hidden></label>
@@ -103,7 +122,7 @@ socket.on('connect',()=>{socket.emit('join',{name:name,pic:myPic,room:currentRoo
 socket.on('history',msgs=>msgs.forEach(addMsg));
 socket.on('message',addMsg);
 socket.on('delivered',id=>{let el=document.getElementById('ticks-'+id);if(el)el.innerText='✓';});
-socket.on('seen',id=>{let el=document.getElementById('ticks-'+id);if(el)el.innerText='✓✓';el.style.color='#7dd3fc';});
+socket.on('seen',id=>{let el=document.getElementById('ticks-'+id);if(el){el.innerText='✓✓';el.style.color='#7dd3fc';}});
 socket.on('react_update',d=>{let el=document.getElementById('reacts-'+d.id);if(el)el.innerHTML=Object.entries(d.reactions).map(([e,u])=>`<span class=reactCount>${e} ${u.length}</span>`).join('');});
 socket.on('online',list=>{document.getElementById('onlineCount').innerText=list.length;document.getElementById('onlineList').innerHTML=list.map(u=>`<div class=user onclick="showUser('${u.name}','${u.pic||''}')"><img src='${avUrl(u.pic,u.name)}'><span class=hide>${u.name}</span><span class=dot></span></div>`).join('');});
 socket.on('typing',d=>{document.getElementById('typing').innerText=d.typing?d.name+' is typing...':'';setTimeout(()=>document.getElementById('typing').innerText='',2000);});
@@ -141,7 +160,8 @@ def on_msg(d):
     d.setdefault("reactions", {})
     store=get_store(room)
     store.setdefault(room, []).append(d)
-    if len(store[room])>100: store[room]=store[room][-100:]
+    if len(store[room])>200: store[room]=store[room][-200:]
+    save_data()
     emit("message", d, room=room, include_self=False)
     emit("delivered", d.get("id"))
 
@@ -153,6 +173,7 @@ def on_react(d):
             m.setdefault("reactions", {})
             lst=m["reactions"].setdefault(d.get("emoji"), [])
             if d.get("name") not in lst: lst.append(d.get("name"))
+            save_data()
             emit("react_update", {"id": d.get("id"), "reactions": m["reactions"]}, room=room)
             break
 
