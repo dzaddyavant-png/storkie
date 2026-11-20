@@ -1,194 +1,146 @@
-import os, json
-from flask import Flask, request
-from flask_socketio import SocketIO, emit, join_room
+from flask import Flask, render_template_string, request
+from flask_socketio import SocketIO, emit
+import json, os
 
 app = Flask(__name__)
+app.config['SECRET_KEY'] = 'storkie-secret-v2'
 socketio = SocketIO(app, cors_allowed_origins="*")
-
-DATA_FILE = "storkie_data.json"
-
-# --- PERSISTENT STORAGE ---
-def load_data():
+MSG_FILE = "messages.json"
+if os.path.exists(MSG_FILE):
     try:
-        if os.path.exists(DATA_FILE):
-            with open(DATA_FILE, "r") as f:
-                d = json.load(f)
-                return d.get("messages", {r: [] for r in ["general","music","football","random"]}), d.get("dms", {})
-    except: pass
-    return {r: [] for r in ["general","music","football","random"]}, {}
-
-messages, dms = load_data()
-users = {}
-
-def save_data():
-    try:
-        # Don't save huge voice/image blobs forever - keep last 100 per room, trim images to avoid huge file
-        with open(DATA_FILE, "w") as f:
-            json.dump({"messages": messages, "dms": dms}, f)
-    except Exception as e:
-        print("save error", e)
+        with open(MSG_FILE, "r") as f:
+            messages = json.load(f)
+    except:
+        messages = []
+else:
+    messages = []
+def save_messages():
+    with open(MSG_FILE, "w") as f:
+        json.dump(messages[-200:], f)
 
 HTML = """
-<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'>
-<title>Storkie</title>
+<!DOCTYPE html>
+<html>
+<head>
+<title>Storkie 🐦</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
-*{box-sizing:border-box;margin:0;padding:0;font-family:system-ui}
-body{background:#0b0b14;color:#fff;height:100vh;display:flex;overflow:hidden}
-#sidebar{width:260px;background:#12121f;display:flex;flex-direction:column;border-right:1px solid #222;overflow-y:auto}
-#logo{padding:16px;font-size:22px;font-weight:800} #logo span{color:#ff2d78}
-#me{display:flex;align-items:center;gap:10px;padding:12px;border-bottom:1px solid #222;cursor:pointer}
-#me img{width:42px;height:42px;border-radius:50%;object-fit:cover;background:#ff2d78}
-.sec{padding:10px 12px 4px;color:#888;font-size:11px;letter-spacing:1px}
-.room,.user,.dm{padding:10px 12px;margin:2px 8px;border-radius:10px;cursor:pointer;display:flex;align-items:center;gap:9px}
-.room.active,.dm.active{background:#ff2d78}
-.user:hover,.dm:hover{background:#1e1e32}
-.user img,.dm img{width:32px;height:32px;border-radius:50%;object-fit:cover;background:#ff2d78}
-.dot{width:9px;height:9px;border-radius:50%;background:#4ade80;margin-left:auto}
-#main{flex:1;display:flex;flex-direction:column;min-width:0}
-#top{padding:12px 16px;background:#12121f;border-bottom:1px solid #222;display:flex;justify-content:space-between}
-#chat{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:10px}
-.msg{max-width:78%;padding:10px 12px;border-radius:16px;background:#1e1e32;align-self:flex-start;word-break:break-word}
-.msg.me{background:#ff2d78;align-self:flex-end}
-.msg img.av{width:28px;height:28px;border-radius:50%;object-fit:cover;vertical-align:middle;margin-right:6px}
-.msg small{opacity:.7;font-size:12px}
-.msg img.chatImg{width:100%;max-width:250px;border-radius:12px;margin-top:6px;display:block}
-.msg audio{width:220px;margin-top:6px}
-.reactRow{display:flex;gap:4px;margin-top:6px}
-.reactBtn{background:rgba(255,255,255,.15);border:none;border-radius:12px;padding:3px 7px;cursor:pointer;font-size:13px;color:#fff}
-.reactCount{background:rgba(0,0,0,.25);border-radius:12px;padding:2px 8px;font-size:13px;margin-top:5px;display:inline-block}
-.ticks{font-size:11px;opacity:.8;margin-left:4px}
-#inputBar{display:flex;gap:8px;padding:12px;background:#12121f;align-items:center}
-#m{flex:1;padding:12px 14px;border-radius:25px;border:none;background:#1e1e32;color:#fff;outline:none}
-button{border:none;border-radius:25px;padding:10px 16px;background:#ff2d78;color:#fff;font-weight:700;cursor:pointer}
-.iconBtn{background:#1e1e32;font-size:18px;padding:10px 12px}
-.iconBtn.rec{background:red;animation:blink 1s infinite}
-@keyframes blink{50%{opacity:.5}}
-#modal{position:fixed;inset:0;background:rgba(0,0,0,.7);display:none;align-items:center;justify-content:center;z-index:99}
-#mbox{background:#1a1a2e;padding:22px;border-radius:18px;text-align:center;width:300px}
-#mbox img{width:90px;height:90px;border-radius:50%;object-fit:cover;background:#ff2d78}
-@media(max-width:700px){#sidebar{width:76px} .hide{display:none}}
-</style></head>
+*{box-sizing:border-box}
+body{font-family:Arial;background:#e8f5e9;margin:0;padding:0}
+header{background:#075E54;color:white;padding:14px;text-align:center;font-size:22px;font-weight:bold;position:sticky;top:0}
+header small{font-size:12px;opacity:0.8;display:block}
+#chat{height:calc(100vh - 140px);overflow-y:auto;padding:10px}
+.msg{background:white;padding:10px;border-radius:14px;margin:8px 0;max-width:85%;display:flex;gap:8px;box-shadow:0 1px 2px rgba(0,0,0,0.1)}
+.me{background:#dcf8c6;margin-left:auto;flex-direction:row-reverse}
+.avatar{width:38px;height:38px;border-radius:50%;background:#25D366;color:white;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;overflow:hidden}
+.avatar img{width:100%;height:100%;object-fit:cover}
+.msg b{font-size:13px;color:#075E54}
+.msg p{margin:3px 0 0 0;font-size:15px;word-break:break-word}
+.msg img.chat-img{max-width:100%;border-radius:10px;margin-top:5px;display:block}
+#box{display:flex;padding:10px;background:white;gap:6px;align-items:center;position:fixed;bottom:0;left:0;right:0}
+input#m{flex:1;padding:12px;border-radius:20px;border:1px solid #ccc;outline:none}
+button{background:#25D366;color:white;border:none;padding:12px 16px;border-radius:20px;font-weight:bold;cursor:pointer}
+#imgBtn{background:#eee;color:#333}
+#setup{position:fixed;inset:0;background:#075E54;color:white;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px;z-index:99;text-align:center}
+#setup input{padding:12px;border-radius:20px;border:none;width:100%;max-width:300px;margin:8px 0;text-align:center;font-size:16px}
+#setup button{width:100%;max-width:300px;padding:13px}
+.avatars{display:flex;gap:8px;margin:10px 0;flex-wrap:wrap;justify-content:center}
+.avatars span{font-size:26px;background:rgba(255,255,255,0.2);padding:8px;border-radius:50%;cursor:pointer}
+.avatars span.sel{outline:3px solid white}
+#myPic{width:70px;height:70px;border-radius:50%;background:white;display:flex;align-items:center;justify-content:center;font-size:35px;overflow:hidden;margin-bottom:5px}
+#myPic img{width:100%;height:100%;object-fit:cover}
+</style>
+</head>
 <body>
-<div id=sidebar>
-<div id=logo>🐦 Storkie<span>.</span></div>
-<div id=me onclick="editProfile()"><img id=myAv><div class=hide><b id=myName>...</b><br><small>● Online</small></div></div>
-<div class='sec hide'>ROOMS</div>
-<div class=room active onclick="setRoom('general',this)"># general</div>
-<div class=room onclick="setRoom('music',this)">🎵 music</div>
-<div class=room onclick="setRoom('football',this)">⚽ football</div>
-<div class=room onclick="setRoom('random',this)">🎲 random</div>
-<div class='sec hide'>DIRECT MESSAGES</div>
-<div id=dmList><div style='padding:0 12px;color:#666;font-size:13px'>Click an online person to DM</div></div>
-<div class='sec hide'>ONLINE — <span id=onlineCount>0</span></div>
-<div id=onlineList></div>
+<header>🐦 Storkie <small>Chat with your people • Online</small></header>
+<div id="chat"></div>
+<div id="box">
+<label for="file" id="imgBtn" style="padding:12px 14px;border-radius:20px;cursor:pointer">📷</label>
+<input type="file" id="file" accept="image/*" hidden>
+<input id="m" placeholder="Type a message...">
+<button onclick="send()">Send ➤</button>
 </div>
-<div id=main>
-<div id=top><div><b id=roomTitle># general</b><br><small id=typing></small></div><small>Storkie • Saved 💾</small></div>
-<div id=chat></div>
-<div id=inputBar>
-<label style='cursor:pointer'>📷<input type=file id=picInput accept='image/*' hidden></label>
-<label style='cursor:pointer;font-size:20px'>🖼️<input type=file id=imgInput accept='image/*' hidden></label>
-<button class=iconBtn id=micBtn onclick='toggleVoice()'>🎤</button>
-<input id=m placeholder='Type a message...'><button onclick='send()'>Send ➤</button>
+
+<div id="setup">
+<div id="myPic">🐦</div>
+<h2 style="margin:5px">Welcome to Storkie!</h2>
+<p>Pick a name & avatar</p>
+<input id="nameInput" placeholder="Your name... e.g Dzaddy">
+<div class="avatars" id="avatarList"></div>
+<input type="file" id="picInput" accept="image/*" style="background:white;color:black">
+<p style="font-size:12px;opacity:0.8">Optional: Upload your profile pic</p>
+<button onclick="join()">Join Storkie ➤</button>
 </div>
-</div>
-<div id=modal onclick="if(event.target==this)this.style.display='none'"><div id=mbox><img id=pImg><h3 id=pName style='margin:10px 0 4px'></h3><p style='color:#4ade80'>● Online</p><p style='color:#aaa;margin:8px 0'>Storkie user 🐦</p><input id=editName placeholder='Your name' style='width:100%;padding:10px;border-radius:10px;border:none;background:#222;color:#fff;margin:5px 0'><br><button onclick='saveProfile()'>Save Profile</button> <button onclick='openDMFromProfile()' style='background:#1e1e32'>💬 Message</button><br><button onclick="document.getElementById('modal').style.display='none'" style='background:#333;margin-top:8px'>Close</button></div></div>
-<script src='https://cdn.socket.io/4.7.2/socket.io.min.js'></script>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
 <script>
-let socket=io();
-let name=localStorage.getItem('storkie_name')||prompt('Your name?')||'Guest';
-localStorage.setItem('storkie_name',name);
-let myPic=localStorage.getItem('storkie_pic')||'';
-let currentRoom='general'; let currentDM=null; let profileUser=null;
-let mediaRec=null, chunks=[], isRec=false;
-function avUrl(pic,n){return pic||('https://ui-avatars.com/api/?name='+encodeURIComponent(n||'?')+'&background=ff2d78&color=fff&bold=true');}
-document.getElementById('myName').innerText=name;
-document.getElementById('myAv').src=avUrl(myPic,name);
-function setRoom(r,el){currentRoom=r;currentDM=null;document.querySelectorAll('.room,.dm').forEach(x=>x.classList.remove('active'));if(el)el.classList.add('active');document.getElementById('roomTitle').innerText='# '+r;document.getElementById('chat').innerHTML='';socket.emit('join',{name:name,pic:myPic,room:r});}
-function openDM(other){if(other==name)return;let key=['dm',...[name,other].sort()].join('_');currentRoom=key;currentDM=other;document.querySelectorAll('.room,.dm').forEach(x=>x.classList.remove('active'));document.getElementById('roomTitle').innerText='💬 '+other;document.getElementById('chat').innerHTML='';socket.emit('join_dm',{name:name,pic:myPic,room:key,other:other});if(!document.getElementById('dm-'+other)){let d=document.createElement('div');d.className='dm active';d.id='dm-'+other;d.innerHTML=`<img src='${avUrl('',other)}'> <span class=hide>${other}</span>`;d.onclick=()=>openDM(other);document.getElementById('dmList').appendChild(d);}}
-function openDMFromProfile(){if(profileUser)openDM(profileUser);document.getElementById('modal').style.display='none';}
-function react(id,emoji){socket.emit('react',{room:currentRoom,id:id,emoji:emoji,name:name});}
-function renderReactions(d){if(!d.reactions)return '';return Object.entries(d.reactions).map(([e,users])=>`<span class=reactCount>${e} ${users.length}</span>`).join('');}
-function addMsg(d){if(document.getElementById('msg-'+d.id))return;let c=document.getElementById('chat');let div=document.createElement('div');div.className='msg'+(d.name==name?' me':'');div.id='msg-'+d.id;let body='';if(d.type=='voice')body=`<audio controls src='${d.audio}'></audio><div>🎤 Voice note</div>`;else if(d.type=='image')body=`<img class=chatImg src='${d.image}' onclick="window.open(this.src)">`;else body=`<div>${d.text||''}</div>`;let ticks=d.name==name?`<span class=ticks id='ticks-${d.id}'>🕐</span>`:'';div.innerHTML=`<img class=av src='${avUrl(d.pic,d.name)}'> <b>${d.name}</b> <small>${new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</small> ${ticks} ${body}<div class=reactRow><button class=reactBtn onclick="react(${d.id},'❤️')">❤️</button><button class=reactBtn onclick="react(${d.id},'😂')">😂</button><button class=reactBtn onclick="react(${d.id},'🔥')">🔥</button><button class=reactBtn onclick="react(${d.id},'👍')">👍</button></div><div id='reacts-${d.id}'>${renderReactions(d)}</div>`;c.appendChild(div);c.scrollTop=c.scrollHeight;if(d.name!=name){socket.emit('seen',{room:currentRoom,id:d.id});}}
-function send(){let inp=document.getElementById('m');if(!inp.value.trim())return;let data={name:name,pic:myPic,text:inp.value,room:currentRoom,id:Date.now()};addMsg(data);socket.emit('message',data);inp.value='';}
-document.getElementById('m').addEventListener('keydown',e=>{if(e.key=='Enter')send();socket.emit('typing',{name:name,room:currentRoom,typing:true});});
-document.getElementById('picInput').addEventListener('change',e=>{let f=e.target.files[0];if(!f)return;let r=new FileReader();r.onload=()=>{myPic=r.result;localStorage.setItem('storkie_pic',myPic);document.getElementById('myAv').src=myPic;socket.emit('join',{name:name,pic:myPic,room:currentRoom});};r.readAsDataURL(f);});
-document.getElementById('imgInput').addEventListener('change',e=>{let f=e.target.files[0];if(!f)return;let r=new FileReader();r.onload=()=>{let data={name:name,pic:myPic,room:currentRoom,type:'image',image:r.result,id:Date.now()};addMsg(data);socket.emit('message',data);};r.readAsDataURL(f);});
-function editProfile(){profileUser=null;document.getElementById('pImg').src=avUrl(myPic,name);document.getElementById('pName').innerText=name;document.getElementById('editName').value=name;document.getElementById('modal').style.display='flex';}
-function saveProfile(){let n=document.getElementById('editName').value.trim();if(n){name=n;localStorage.setItem('storkie_name',n);document.getElementById('myName').innerText=n;document.getElementById('myAv').src=avUrl(myPic,n);socket.emit('join',{name:name,pic:myPic,room:currentRoom});}document.getElementById('modal').style.display='none';}
-function showUser(n,p){profileUser=n;document.getElementById('pImg').src=avUrl(p,n);document.getElementById('pName').innerText=n;document.getElementById('editName').value='';document.getElementById('modal').style.display='flex';}
-async function toggleVoice(){if(!isRec){try{let s=await navigator.mediaDevices.getUserMedia({audio:true});chunks=[];mediaRec=new MediaRecorder(s);mediaRec.ondataavailable=e=>chunks.push(e.data);mediaRec.onstop=()=>{let b=new Blob(chunks,{type:'audio/webm'});let r=new FileReader();r.onload=()=>{let data={name:name,pic:myPic,room:currentRoom,type:'voice',audio:r.result,id:Date.now()};addMsg(data);socket.emit('message',data);};r.readAsDataURL(b);};mediaRec.start();isRec=true;document.getElementById('micBtn').classList.add('rec');document.getElementById('micBtn').innerText='⏹️';}catch(e){alert('Allow mic to send voice notes');}}else{mediaRec.stop();isRec=false;document.getElementById('micBtn').classList.remove('rec');document.getElementById('micBtn').innerText='🎤';}}
-socket.on('connect',()=>{socket.emit('join',{name:name,pic:myPic,room:currentRoom});});
-socket.on('history',msgs=>msgs.forEach(addMsg));
-socket.on('message',addMsg);
-socket.on('delivered',id=>{let el=document.getElementById('ticks-'+id);if(el)el.innerText='✓';});
-socket.on('seen',id=>{let el=document.getElementById('ticks-'+id);if(el){el.innerText='✓✓';el.style.color='#7dd3fc';}});
-socket.on('react_update',d=>{let el=document.getElementById('reacts-'+d.id);if(el)el.innerHTML=Object.entries(d.reactions).map(([e,u])=>`<span class=reactCount>${e} ${u.length}</span>`).join('');});
-socket.on('online',list=>{document.getElementById('onlineCount').innerText=list.length;document.getElementById('onlineList').innerHTML=list.map(u=>`<div class=user onclick="showUser('${u.name}','${u.pic||''}')"><img src='${avUrl(u.pic,u.name)}'><span class=hide>${u.name}</span><span class=dot></span></div>`).join('');});
-socket.on('typing',d=>{document.getElementById('typing').innerText=d.typing?d.name+' is typing...':'';setTimeout(()=>document.getElementById('typing').innerText='',2000);});
-</script></body></html>
+let name = localStorage.getItem('storkie_name') || "";
+let myAvatar = localStorage.getItem('storkie_avatar') || "🐦";
+let myPic = localStorage.getItem('storkie_pic') || "";
+let socket = io();
+let chat = document.getElementById('chat');
+let emojis = ["🐦","😎","🔥","🦁","👑","💎","⚽","🎮","😂","🌟","🐺","🦅"];
+let avDiv = document.getElementById('avatarList');
+emojis.forEach(e=>{
+  let s=document.createElement('span'); s.textContent=e;
+  if(e==myAvatar) s.classList.add('sel');
+  s.onclick=()=>{ myAvatar=e; document.querySelectorAll('.avatars span').forEach(x=>x.classList.remove('sel')); s.classList.add('sel'); document.getElementById('myPic').innerHTML=e; };
+  avDiv.appendChild(s);
+});
+if(myPic){ document.getElementById('myPic').innerHTML='<img src="'+myPic+'">'; }
+document.getElementById('picInput').addEventListener('change', function(){
+  let f=this.files[0]; if(!f) return;
+  let r=new FileReader(); r.onload=()=>{ myPic=r.result; document.getElementById('myPic').innerHTML='<img src="'+myPic+'">'; }; r.readAsDataURL(f);
+});
+if(name){ document.getElementById('setup').style.display='none'; }
+else { document.getElementById('nameInput').value=""; }
+
+function join(){
+  let n=document.getElementById('nameInput').value.trim();
+  if(!n){ alert("Enter your name broo!"); return; }
+  name=n; localStorage.setItem('storkie_name',name);
+  localStorage.setItem('storkie_avatar',myAvatar);
+  localStorage.setItem('storkie_pic',myPic);
+  document.getElementById('setup').style.display='none';
+}
+function send(){
+  let input=document.getElementById('m');
+  if(input.value.trim()=="") return;
+  socket.emit('message',{name:name,avatar:myAvatar,pic:myPic,text:input.value});
+  input.value="";
+}
+document.getElementById('file').addEventListener('change', function(){
+  let f=this.files[0]; if(!f) return;
+  let r=new FileReader(); r.onload=()=>{ socket.emit('message',{name:name,avatar:myAvatar,pic:myPic,image:r.result}); }; r.readAsDataURL(f);
+  this.value="";
+});
+function showMsg(data){
+let div=document.createElement('div');
+div.className='msg'+(data.name==name?' me':'');
+let av = data.pic ? '<img src="'+data.pic+'">' : data.avatar;
+let content = data.image ? '<img class="chat-img" src="'+data.image+'">' : '<p>'+data.text+'</p>';
+div.innerHTML='<div class="avatar">'+av+'</div><div><b>'+data.name+'</b><br>'+content+'</div>';
+chat.appendChild(div); chat.scrollTop=chat.scrollHeight;
+}
+socket.on('message', function(data){ showMsg(data); });
+socket.on('history', function(list){ list.forEach(function(d){ showMsg(d); }); }); document.getElementById('m').addEventListener('keypress', e=>{ if(e.key=='Enter') send(); });
+</script>
+</body>
+</html>
 """
 
-@app.route("/")
-def index(): return HTML
+@app.route('/')
+def index():
+    return render_template_string(HTML)
 
-def send_online():
-    seen={}
-    for u in users.values(): seen[u["name"]]=u
-    socketio.emit("online", list(seen.values()))
+@socketio.on('connect')
+def on_connect():
+    emit('history', messages)
 
-def get_store(room):
-    return dms if room.startswith("dm_") else messages
-
-@socketio.on("join")
-def on_join(d):
-    users[request.sid]={"name":d.get("name"),"pic":d.get("pic","")}
-    join_room(d.get("room","general"))
-    emit("history", messages.get(d.get("room","general"), []))
-    send_online()
-
-@socketio.on("join_dm")
-def on_join_dm(d):
-    users[request.sid]={"name":d.get("name"),"pic":d.get("pic","")}
-    join_room(d.get("room"))
-    emit("history", dms.get(d.get("room"), []))
-    send_online()
-
-@socketio.on("message")
-def on_msg(d):
-    room=d.get("room","general")
-    d.setdefault("reactions", {})
-    store=get_store(room)
-    store.setdefault(room, []).append(d)
-    if len(store[room])>200: store[room]=store[room][-200:]
-    save_data()
-    emit("message", d, room=room, include_self=False)
-    emit("delivered", d.get("id"))
-
-@socketio.on("react")
-def on_react(d):
-    room=d.get("room"); store=get_store(room)
-    for m in store.get(room, []):
-        if str(m.get("id"))==str(d.get("id")):
-            m.setdefault("reactions", {})
-            lst=m["reactions"].setdefault(d.get("emoji"), [])
-            if d.get("name") not in lst: lst.append(d.get("name"))
-            save_data()
-            emit("react_update", {"id": d.get("id"), "reactions": m["reactions"]}, room=room)
-            break
-
-@socketio.on("seen")
-def on_seen(d):
-    emit("seen", d.get("id"), room=d.get("room"), include_self=False)
-
-@socketio.on("typing")
-def on_typing(d):
-    emit("typing", d, room=d.get("room","general"), include_self=False)
-
-@socketio.on("disconnect")
-def on_disc():
-    users.pop(request.sid, None)
-    send_online()
-
-if __name__=="__main__":
-    socketio.run(app, host="0.0.0.0", port=int(os.environ.get("PORT",5000)))
+@socketio.on('message')
+def handle_message(data):
+    messages.append(data)
+    save_messages()
+    emit('message', data, broadcast=True)
+if __name__ == '__main__':
+    socketio.run(app, host='0.0.0.0', port=5000, debug=True)
