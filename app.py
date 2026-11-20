@@ -6,8 +6,8 @@ app = Flask(__name__)
 socketio = SocketIO(app, cors_allowed_origins="*")
 
 messages = {r: [] for r in ["general","music","football","random"]}
-dms = {}  # dm_room -> [msgs]
-users = {}  # sid -> {name, avatar, pic}
+dms = {}
+users = {}
 
 HTML = """
 <!DOCTYPE html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'>
@@ -32,7 +32,12 @@ body{background:#0b0b14;color:#fff;height:100vh;display:flex;overflow:hidden}
 .msg.me{background:#ff2d78;align-self:flex-end}
 .msg img.av{width:28px;height:28px;border-radius:50%;object-fit:cover;vertical-align:middle;margin-right:6px}
 .msg small{opacity:.7;font-size:12px}
+.msg img.chatImg{width:100%;max-width:250px;border-radius:12px;margin-top:6px;display:block}
 .msg audio{width:220px;margin-top:6px}
+.reactRow{display:flex;gap:4px;margin-top:6px}
+.reactBtn{background:rgba(255,255,255,.15);border:none;border-radius:12px;padding:3px 7px;cursor:pointer;font-size:13px;color:#fff}
+.reactCount{background:rgba(0,0,0,.25);border-radius:12px;padding:2px 8px;font-size:13px;margin-top:5px;display:inline-block}
+.ticks{font-size:11px;opacity:.8;margin-left:4px}
 #inputBar{display:flex;gap:8px;padding:12px;background:#12121f;align-items:center}
 #m{flex:1;padding:12px 14px;border-radius:25px;border:none;background:#1e1e32;color:#fff;outline:none}
 button{border:none;border-radius:25px;padding:10px 16px;background:#ff2d78;color:#fff;font-weight:700;cursor:pointer}
@@ -63,6 +68,7 @@ button{border:none;border-radius:25px;padding:10px 16px;background:#ff2d78;color
 <div id=chat></div>
 <div id=inputBar>
 <label style='cursor:pointer'>📷<input type=file id=picInput accept='image/*' hidden></label>
+<label style='cursor:pointer;font-size:20px'>🖼️<input type=file id=imgInput accept='image/*' hidden></label>
 <button class=iconBtn id=micBtn onclick='toggleVoice()'>🎤</button>
 <input id=m placeholder='Type a message...'><button onclick='send()'>Send ➤</button>
 </div>
@@ -80,12 +86,15 @@ function avUrl(pic,n){return pic||('https://ui-avatars.com/api/?name='+encodeURI
 document.getElementById('myName').innerText=name;
 document.getElementById('myAv').src=avUrl(myPic,name);
 function setRoom(r,el){currentRoom=r;currentDM=null;document.querySelectorAll('.room,.dm').forEach(x=>x.classList.remove('active'));if(el)el.classList.add('active');document.getElementById('roomTitle').innerText='# '+r;document.getElementById('chat').innerHTML='';socket.emit('join',{name:name,pic:myPic,room:r});}
-function openDM(other){if(other==name)return;let key=['dm',...[name,other].sort()].join('_');currentRoom=key;currentDM=other;document.querySelectorAll('.room,.dm').forEach(x=>x.classList.remove('active'));document.getElementById('roomTitle').innerText='💬 '+other;document.getElementById('chat').innerHTML='';socket.emit('join_dm',{name:name,pic:myPic,room:key,other:other});let list=document.getElementById('dmList');if(!document.getElementById('dm-'+other)){let d=document.createElement('div');d.className='dm active';d.id='dm-'+other;d.innerHTML=`<img src='${avUrl('',other)}'> <span class=hide>${other}</span>`;d.onclick=()=>openDM(other);list.appendChild(d);}}
+function openDM(other){if(other==name)return;let key=['dm',...[name,other].sort()].join('_');currentRoom=key;currentDM=other;document.querySelectorAll('.room,.dm').forEach(x=>x.classList.remove('active'));document.getElementById('roomTitle').innerText='💬 '+other;document.getElementById('chat').innerHTML='';socket.emit('join_dm',{name:name,pic:myPic,room:key,other:other});if(!document.getElementById('dm-'+other)){let d=document.createElement('div');d.className='dm active';d.id='dm-'+other;d.innerHTML=`<img src='${avUrl('',other)}'> <span class=hide>${other}</span>`;d.onclick=()=>openDM(other);document.getElementById('dmList').appendChild(d);}}
 function openDMFromProfile(){if(profileUser)openDM(profileUser);document.getElementById('modal').style.display='none';}
-function addMsg(d){let c=document.getElementById('chat');let div=document.createElement('div');div.className='msg'+(d.name==name?' me':'');let body=d.type=='voice'?`<audio controls src='${d.audio}'></audio><div>🎤 Voice note</div>`:`<div>${d.text||''}</div>`;div.innerHTML=`<img class=av src='${avUrl(d.pic,d.name)}'> <b>${d.name}</b> <small>${new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</small>${body}`;c.appendChild(div);c.scrollTop=c.scrollHeight;}
+function react(id,emoji){socket.emit('react',{room:currentRoom,id:id,emoji:emoji,name:name});}
+function renderReactions(d){if(!d.reactions)return '';return Object.entries(d.reactions).map(([e,users])=>`<span class=reactCount>${e} ${users.length}</span>`).join('');}
+function addMsg(d){if(document.getElementById('msg-'+d.id))return;let c=document.getElementById('chat');let div=document.createElement('div');div.className='msg'+(d.name==name?' me':'');div.id='msg-'+d.id;let body='';if(d.type=='voice')body=`<audio controls src='${d.audio}'></audio><div>🎤 Voice note</div>`;else if(d.type=='image')body=`<img class=chatImg src='${d.image}' onclick="window.open(this.src)">`;else body=`<div>${d.text||''}</div>`;let ticks=d.name==name?`<span class=ticks id='ticks-${d.id}'>🕐</span>`:'';div.innerHTML=`<img class=av src='${avUrl(d.pic,d.name)}'> <b>${d.name}</b> <small>${new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</small> ${ticks} ${body}<div class=reactRow><button class=reactBtn onclick="react(${d.id},'❤️')">❤️</button><button class=reactBtn onclick="react(${d.id},'😂')">😂</button><button class=reactBtn onclick="react(${d.id},'🔥')">🔥</button><button class=reactBtn onclick="react(${d.id},'👍')">👍</button></div><div id='reacts-${d.id}'>${renderReactions(d)}</div>`;c.appendChild(div);c.scrollTop=c.scrollHeight;if(d.name!=name){socket.emit('seen',{room:currentRoom,id:d.id});}}
 function send(){let inp=document.getElementById('m');if(!inp.value.trim())return;let data={name:name,pic:myPic,text:inp.value,room:currentRoom,id:Date.now()};addMsg(data);socket.emit('message',data);inp.value='';}
 document.getElementById('m').addEventListener('keydown',e=>{if(e.key=='Enter')send();socket.emit('typing',{name:name,room:currentRoom,typing:true});});
 document.getElementById('picInput').addEventListener('change',e=>{let f=e.target.files[0];if(!f)return;let r=new FileReader();r.onload=()=>{myPic=r.result;localStorage.setItem('storkie_pic',myPic);document.getElementById('myAv').src=myPic;socket.emit('join',{name:name,pic:myPic,room:currentRoom});};r.readAsDataURL(f);});
+document.getElementById('imgInput').addEventListener('change',e=>{let f=e.target.files[0];if(!f)return;let r=new FileReader();r.onload=()=>{let data={name:name,pic:myPic,room:currentRoom,type:'image',image:r.result,id:Date.now()};addMsg(data);socket.emit('message',data);};r.readAsDataURL(f);});
 function editProfile(){profileUser=null;document.getElementById('pImg').src=avUrl(myPic,name);document.getElementById('pName').innerText=name;document.getElementById('editName').value=name;document.getElementById('modal').style.display='flex';}
 function saveProfile(){let n=document.getElementById('editName').value.trim();if(n){name=n;localStorage.setItem('storkie_name',n);document.getElementById('myName').innerText=n;document.getElementById('myAv').src=avUrl(myPic,n);socket.emit('join',{name:name,pic:myPic,room:currentRoom});}document.getElementById('modal').style.display='none';}
 function showUser(n,p){profileUser=n;document.getElementById('pImg').src=avUrl(p,n);document.getElementById('pName').innerText=n;document.getElementById('editName').value='';document.getElementById('modal').style.display='flex';}
@@ -93,6 +102,9 @@ async function toggleVoice(){if(!isRec){try{let s=await navigator.mediaDevices.g
 socket.on('connect',()=>{socket.emit('join',{name:name,pic:myPic,room:currentRoom});});
 socket.on('history',msgs=>msgs.forEach(addMsg));
 socket.on('message',addMsg);
+socket.on('delivered',id=>{let el=document.getElementById('ticks-'+id);if(el)el.innerText='✓';});
+socket.on('seen',id=>{let el=document.getElementById('ticks-'+id);if(el)el.innerText='✓✓';el.style.color='#7dd3fc';});
+socket.on('react_update',d=>{let el=document.getElementById('reacts-'+d.id);if(el)el.innerHTML=Object.entries(d.reactions).map(([e,u])=>`<span class=reactCount>${e} ${u.length}</span>`).join('');});
 socket.on('online',list=>{document.getElementById('onlineCount').innerText=list.length;document.getElementById('onlineList').innerHTML=list.map(u=>`<div class=user onclick="showUser('${u.name}','${u.pic||''}')"><img src='${avUrl(u.pic,u.name)}'><span class=hide>${u.name}</span><span class=dot></span></div>`).join('');});
 socket.on('typing',d=>{document.getElementById('typing').innerText=d.typing?d.name+' is typing...':'';setTimeout(()=>document.getElementById('typing').innerText='',2000);});
 </script></body></html>
@@ -106,6 +118,9 @@ def send_online():
     for u in users.values(): seen[u["name"]]=u
     socketio.emit("online", list(seen.values()))
 
+def get_store(room):
+    return dms if room.startswith("dm_") else messages
+
 @socketio.on("join")
 def on_join(d):
     users[request.sid]={"name":d.get("name"),"pic":d.get("pic","")}
@@ -116,21 +131,34 @@ def on_join(d):
 @socketio.on("join_dm")
 def on_join_dm(d):
     users[request.sid]={"name":d.get("name"),"pic":d.get("pic","")}
-    room=d.get("room")
-    join_room(room)
-    emit("history", dms.get(room, []))
+    join_room(d.get("room"))
+    emit("history", dms.get(d.get("room"), []))
     send_online()
 
 @socketio.on("message")
 def on_msg(d):
     room=d.get("room","general")
-    if room.startswith("dm_"):
-        dms.setdefault(room, []).append(d)
-        if len(dms[room])>100: dms[room]=dms[room][-100:]
-    else:
-        messages.setdefault(room, []).append(d)
-        if len(messages[room])>100: messages[room]=messages[room][-100:]
+    d.setdefault("reactions", {})
+    store=get_store(room)
+    store.setdefault(room, []).append(d)
+    if len(store[room])>100: store[room]=store[room][-100:]
     emit("message", d, room=room, include_self=False)
+    emit("delivered", d.get("id"))
+
+@socketio.on("react")
+def on_react(d):
+    room=d.get("room"); store=get_store(room)
+    for m in store.get(room, []):
+        if str(m.get("id"))==str(d.get("id")):
+            m.setdefault("reactions", {})
+            lst=m["reactions"].setdefault(d.get("emoji"), [])
+            if d.get("name") not in lst: lst.append(d.get("name"))
+            emit("react_update", {"id": d.get("id"), "reactions": m["reactions"]}, room=room)
+            break
+
+@socketio.on("seen")
+def on_seen(d):
+    emit("seen", d.get("id"), room=d.get("room"), include_self=False)
 
 @socketio.on("typing")
 def on_typing(d):
