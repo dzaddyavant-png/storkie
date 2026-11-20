@@ -128,7 +128,10 @@ socket.on('connect', ()=>{
 function send(){
  let input=document.getElementById('m');
  if(input.value.trim()=="")return;
- socket.emit('message',{name:name,avatar:myAvatar,pic:myPic,text:input.value,room:currentRoom});
+ let text=input.value;
+socket.emit('message',{name:name,avatar:myAvatar,pic:myPic,text:text,room:currentRoom});
+addMsg({name:name,avatar:myAvatar,pic:myPic,text:text,id:Date.now()});
+
  socket.emit('typing',{name:name,room:currentRoom,typing:false});
  input.value="";
 }
